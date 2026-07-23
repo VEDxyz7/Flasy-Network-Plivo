@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Reliable UDP Media Delivery - Summary</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            margin: 40px;
+            line-height: 1.6;
+        }
+
+        h1, h2 {
+            color: #1f4e79;
+        }
+
+        code {
+            background: #f3f3f3;
+            padding: 2px 5px;
+        }
+    </style>
+</head>
+
+<body>
+
+<h1>Reliable UDP Media Delivery Summary</h1>
+
+<h2>Overview</h2>
+
+<p>
+The project implements a lightweight reliability layer over UDP by using controlled packet duplication.
+The goal is to reduce packet loss while maintaining bandwidth below the required 2× overhead limit and
+keeping playback latency as low as possible.
+</p>
+
+<h2>Sender Architecture</h2>
+
+<p>
+The sender continuously receives packets from the source application.
+Each packet is transmitted immediately to minimize latency.
+To improve reliability, approximately 90% of packets are duplicated.
+Duplication is skipped for packets whose sequence number is divisible by 10,
+keeping the average bandwidth overhead below the required limit.
+</p>
+
+<ul>
+<li>Receive packet from source</li>
+<li>Immediately transmit the original packet</li>
+<li>Duplicate about 90% of packets</li>
+<li>No buffering or packet encoding</li>
+</ul>
+
+<h2>Receiver Architecture</h2>
+
+<p>
+The receiver immediately forwards every newly received packet to the player.
+A fixed-size ring buffer stores recently observed sequence numbers to suppress duplicate packets.
+This avoids delivering multiple copies generated either by the sender or by the relay.
+</p>
+
+<ul>
+<li>Receive packet</li>
+<li>Check whether it has already been received</li>
+<li>Discard duplicate packets</li>
+<li>Immediately forward unique packets</li>
+</ul>
+
+<h2>Design Choices</h2>
+
+<ul>
+<li>Immediate forwarding to minimize playout delay.</li>
+<li>Packet duplication instead of Forward Error Correction.</li>
+<li>Duplicate suppression using sequence numbers.</li>
+<li>Bandwidth maintained below the 2× assignment limit.</li>
+<li>Simple implementation with low computational overhead.</li>
+</ul>
+
+<h2>Advantages</h2>
+
+<ul>
+<li>Very simple protocol.</li>
+<li>Low processing overhead.</li>
+<li>No recovery delay introduced by parity generation.</li>
+<li>Good performance under moderate packet loss.</li>
+</ul>
+
+<h2>Limitations</h2>
+
+<ul>
+<li>Packets cannot be recovered if both the original and duplicate are lost.</li>
+<li>Performance decreases under higher packet loss or large network delays.</li>
+<li>No retransmission or Forward Error Correction is used.</li>
+</ul>
+
+<h2>Final Design</h2>
+
+<p>
+The final implementation favors simplicity and low latency by combining immediate packet forwarding
+with controlled packet duplication and duplicate suppression. This approach improves reliability while
+keeping the bandwidth overhead safely below the required limit.
+</p>
+
+</body>
+</html>

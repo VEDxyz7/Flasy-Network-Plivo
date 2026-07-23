@@ -1,49 +1,68 @@
-/* BASELINE RECEIVER (C) — naive on purpose. Rewrite it (C, C++, Go, or Rust).
- *
- * Ports (all 127.0.0.1):
- *   bind 47002  <- media from your sender, via the hostile relay
- *   send 47020  -> harness player. MUST be: 4-byte big-endian seq +
- *                  160-byte payload. Frame i counts only if it arrives
- *                  BEFORE its deadline t0 + DELAY_MS + i*20ms.
- *   send 47003  -> feedback to your sender, via the relay (optional)
- *
- * This baseline forwards whatever arrives straight to the player: lost
- * frames stay lost, late frames stay late, duplicates are re-sent
- * harmlessly. All yours to fix — jitter buffer, reordering, recovery.
- *
- * Env vars available: T0, DURATION_S, DELAY_MS. Harness kills the process
- * at run end; a forever-loop is fine.
- */
-#include <arpa/inet.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <stdint.h>
+
+#define RING_SIZE 1024
+#define PACKET_SIZE 164
+
+// Simplified duplicate suppression structures
+uint32_t seen_seq[RING_SIZE];
+int present[RING_SIZE];
 
 int main(void) {
-    int in_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    struct sockaddr_in in_addr = {0};
-    in_addr.sin_family = AF_INET;
-    in_addr.sin_port = htons(47002);
-    in_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    if (bind(in_fd, (struct sockaddr *)&in_addr, sizeof in_addr) < 0) {
-        perror("bind 47002");
-        return 1;
+    // --- SOCKET SETUP ---
+    int sock_in = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_in < 0) { perror("Failed input socket"); exit(1); }
+
+    int sock_out = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_out < 0) { perror("Failed output socket"); exit(1); }
+    
+    struct sockaddr_in my_addr;
+    memset(&my_addr, 0, sizeof(my_addr));
+    my_addr.sin_family = AF_INET;
+    my_addr.sin_port = htons(47002);
+    my_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    if (bind(sock_in, (struct sockaddr*)&my_addr, sizeof(my_addr)) < 0) {
+        perror("Failed bind"); exit(1);
     }
 
-    int out_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    struct sockaddr_in player = {0};
-    player.sin_family = AF_INET;
-    player.sin_port = htons(47020);
-    player.sin_addr.s_addr = inet_addr("127.0.0.1");
+    struct sockaddr_in player_addr;
+    memset(&player_addr, 0, sizeof(player_addr));
+    player_addr.sin_family = AF_INET;
+    player_addr.sin_port = htons(47020);
+    player_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    unsigned char buf[2048];
-    for (;;) {
-        ssize_t n = recvfrom(in_fd, buf, sizeof buf, 0, NULL, NULL);
-        if (n <= 0) continue;
-        /* jitter buffer / reorder / recovery logic goes here */
-        sendto(out_fd, buf, (size_t)n, 0, (struct sockaddr *)&player,
-               sizeof player);
+    // --- RECEIVER LOGIC ---
+    memset(present, 0, sizeof(present));
+    memset(seen_seq, 0, sizeof(seen_seq));
+    
+    uint8_t buf[PACKET_SIZE];
+
+    while (1) {
+        ssize_t n = recvfrom(sock_in, buf, sizeof(buf), 0, NULL, NULL);
+        if (n != PACKET_SIZE) continue;
+
+        // Parse sequence number
+        uint32_t net_seq;
+        memcpy(&net_seq, buf, 4);
+        uint32_t seq = ntohl(net_seq);
+        uint32_t idx = seq % RING_SIZE;
+
+        // Ignore exact duplicate packets (either from our fractional duplication or the network)
+        if (present[idx] && seen_seq[idx] == seq) {
+            continue; 
+        }
+
+        // Mark as seen
+        present[idx] = 1;
+        seen_seq[idx] = seq;
+
+        // Forward immediately to the harness player (Out-of-order is fully supported)
+        sendto(sock_out, buf, PACKET_SIZE, 0, (struct sockaddr*)&player_addr, sizeof(player_addr));
     }
+
     return 0;
 }
